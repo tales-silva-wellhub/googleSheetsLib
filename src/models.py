@@ -10,14 +10,16 @@ class SheetsError:
     message: str
     code: Optional[int] = None
     reason: Optional[str] = None
+    function_name: Optional[str] = None
     details: Any = None
 
 @dataclass
 class Response(Generic[T]):
     """Objeto de resposta universal para todas as operações da lib."""
-    ok: bool
+    
     data: Optional[T] = None
     error: Optional[SheetsError] = None
+    ok: bool = (error == None)
     date: datetime = field(default_factory=datetime.now)
 
     @classmethod

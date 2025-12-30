@@ -1,3 +1,6 @@
 src/test.py
 auth/cred.json
 auth/token.json
+src/testing stuff.ipynb
+test.py
+__pycache__/
