@@ -7,7 +7,7 @@ from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
 from .models import Response
 from typing import Any
-from .config import TOKEN_PATH, CRED_PATH, SCOPES, AUTH_FOLDER, CRED_FILE_NAME, TOKEN_FILE_NAME
+from .config import TOKEN_PATH, CRED_PATH, SCOPES
 from dotenv import load_dotenv
 import json
 
@@ -48,12 +48,8 @@ class ClientWrapper:
             except Exception:
                 pass
 
-
         self.service = self._authenticate()
         
-        
-        
-
     def _authenticate(self) -> Resource:
         if self.token_dict:
             self.creds = Credentials.from_authorized_user_info(self.token_dict, self.scopes)
@@ -76,13 +72,14 @@ class ClientWrapper:
         else:
             flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, self.scopes)
             self.creds = flow.run_local_server(port=0)
-        
-        # Salva o token atualizado
-        if self.token_path:
-            if not os.path.exists(self.auth_folder):
-                os.mkdir(self.auth_folder)
-            with open(self.token_path, 'w') as token:
-                token.write(self.creds.to_json())
+            if self.token_path:
+                try:
+                    if not os.path.exists(self.auth_folder):
+                        os.mkdir(self.auth_folder)
+                    with open(self.token_path, 'w') as token:
+                        token.write(self.creds.to_json())
+                except Exception as e:
+                    print(f'Não foi possível salvar token: {e}.')
 
     def _ensure_valid_auth(self):
         """Verifica se a autenticação expirou e renova se necessário antes de um comando."""
