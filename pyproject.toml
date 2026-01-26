@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "googleSheetsLib"
+version = "0.1.0"
+description = "Utilitário interno para Google Sheets"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    # Liste aqui as libs que seu projeto usa
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+    "pandas"
+]
+
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
