@@ -8,3 +8,4 @@ src/googleSheetsLib/.env
 src/googleSheetsLib.egg-info
 tests/
 testnotebook.ipynb
+.env

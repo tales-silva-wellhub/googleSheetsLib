@@ -7,23 +7,57 @@ from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
 from .models import Response
 from typing import Any
-from .config import TOKEN_PATH, CRED_PATH, SCOPES
+from .config import TOKEN_PATH, CRED_PATH, SCOPES, AUTH_FOLDER, CRED_FILE_NAME, TOKEN_FILE_NAME
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 
 class ClientWrapper:
-    def __init__(self, credentials_path: str = CRED_PATH, 
+    def __init__(self,
+                 credentials_path: str = CRED_PATH, 
                  token_path: str = TOKEN_PATH, 
                  scopes: list = SCOPES):
+
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.scopes = scopes
         self.creds = None # Armazenamos as credenciais separadamente
+
+        if '/' in token_path:
+            folder = '/'.join(token_path.split('/')[:-1])
+            self.auth_folder = folder
+        else:
+            self.auth_folder = ''
+            
+
+        self.token_dict = None
+        self.creds_dict = None
+
+        token_dict = os.getenv('GOOGLE_SERVICE_TOKEN')
+        creds_dict = os.getenv('GOOGLE_SERVICE_CREDS')
+
+        if token_dict:
+            try:
+                self.token_dict = json.loads(token_dict)
+            except Exception:
+                pass
+        if creds_dict:
+            try:
+                self.creds_dict = json.loads(creds_dict)
+            except Exception:
+                pass
+
+
         self.service = self._authenticate()
+        
+        
+        
 
     def _authenticate(self) -> Resource:
-        if os.path.exists(self.token_path):
+        if self.token_dict:
+            self.creds = Credentials.from_authorized_user_info(self.token_dict, self.scopes)
+        elif os.path.exists(self.token_path):
             self.creds = Credentials.from_authorized_user_file(self.token_path, self.scopes)
         
         # Lógica inicial de login
@@ -36,13 +70,19 @@ class ClientWrapper:
         """Lógica centralizada para renovar token ou abrir browser."""
         if self.creds and self.creds.expired and self.creds.refresh_token:
             self.creds.refresh(Request())
+        elif self.creds_dict:
+            flow = InstalledAppFlow.from_client_config(self.creds_dict, self.scopes)
+            self.creds = flow.run_local_server(port=0)
         else:
             flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, self.scopes)
             self.creds = flow.run_local_server(port=0)
         
         # Salva o token atualizado
-        with open(self.token_path, 'w') as token:
-            token.write(self.creds.to_json())
+        if self.token_path:
+            if not os.path.exists(self.auth_folder):
+                os.mkdir(self.auth_folder)
+            with open(self.token_path, 'w') as token:
+                token.write(self.creds.to_json())
 
     def _ensure_valid_auth(self):
         """Verifica se a autenticação expirou e renova se necessário antes de um comando."""
@@ -73,3 +113,7 @@ class ClientWrapper:
                 return Response.fail(message=str(e), code=e.resp.status)
             except Exception as e:
                 return Response.fail(message=f"Erro inesperado: {str(e)}")
+
+if __name__ == '__main__':
+    print(os.getenv('GOOGLE_SERVICE_TOKEN'))
+    print(os.getenv('GOOGLE_SERVICE_CREDS'))
