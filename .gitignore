@@ -1,5 +1,10 @@
-*
-!src/
-!README.md
-!pyproject.toml
-!.gitignore
+.vscode/
+__pycache__/
+auth/
+build/
+googleSheetsLib.egg-info/
+src/__pycache__
+src/googleSheetsLib/.env
+src/googleSheetsLib.egg-info
+tests/
+testnotebook.ipynb
