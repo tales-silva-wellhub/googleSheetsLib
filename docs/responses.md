@@ -1,3 +1,3 @@
 ::: googleSheetsLib.models.Response
 
-::: googleSheetslib.models.SheetsError
+::: googleSheetsLib.models.SheetsError
