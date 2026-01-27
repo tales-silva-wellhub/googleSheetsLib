@@ -37,4 +37,5 @@ nav:
   - Home: index.md
   - API Reference:
       - Spreadsheet: spreadsheet.md
+      - Sheet: sheet.md
       - Responses & Errors: responses.md

@@ -395,6 +395,58 @@ class Spreadsheet:
             raise ValueError(f'Unexpected parameter type: {type(sheet)}.')
 
 class Sheet:
+    """
+    Interface that deals with Sheets at the tab level via API.
+
+    This shouldn't be instanced directly, and instead it's expected to be created
+    via the Spreadsheet class using the get methods.
+
+    The interface with the service and ClientWrapper are derived from it's parent Spreadsheet object.
+    
+    For more information on the API, visit:
+    https://developers.google.com/workspace/sheets/api/quickstart/python
+
+    Attributes:
+        name (str): The tab name, the same as in Google Sheets.
+        id (int): Numeric id that uniquely identifies the Sheet in a Spreadsheet.
+        client (ClientWrapper): Handler for API requests, authentication, and retry logic. References parent Spreadsheet.
+        service (SpreadsheetResource): The authenticated Google Sheets API resource. References parent spreadsheet.
+        row_count (int): Count of rows in the tab. Only updated after a metadata refresh.
+        column_count (int): Count of columns in the tab. Only updated after a metadata refresh.
+        parent_spreadsheet (Spreadsheet): Spreadsheet object that originated this Sheet.
+    
+    Args:
+        name (str): Tab name.
+        id (int): Tab id.
+        parent_spreadsheet (Spreadsheet): Parent Spreadsheet,
+        client (ClientWrapper): Client interface to handle requests 
+        service (SpreadsheetsResource): Google Sheets API resource to create requests.
+        row_count (int, optional): Number of rows.
+        column_count (int, optional): Number of columns.
+
+    Notes:
+        Do not instantiate this directly.
+        References parent Spreadsheet while it exists, but not all requests need to go
+        through the parent Spreadsheet object.
+
+
+    Example:
+        ```python
+        # Instantiating Sheet object
+        tab = ss['Tab Name']
+        
+        # Accessing values from the tab
+        values = tab['A1:G22']
+
+        # Updating a range in the tab
+        values = [[1,2],
+                  [3,4]]
+        tab.update(rng = 'C3:D4', values = values)
+
+        # Also works
+        tab['C3:D4'] = values
+        ```
+    """
     def __init__(self,
                  name:str,
                  id:int,
@@ -414,7 +466,43 @@ class Sheet:
         self.parent_spreadsheet = parent_spreadsheet
 
     def get_values(self, rng:str = '') -> Response:
-        "Função que pega valores de uma aba da planilha, especificando ou não o range."
+        """
+        Method to access the sheet's values. If range is not specified, returns the whole content if the sheet.
+        Returns a Response object with the values.
+        Can also by called by subscript notation, e.g. tab['A1:C2']
+
+        Args: 
+            rng(str, optional): Range in the Excel Format. E.g `A1:Q22`, `A:Q`, `C32`.
+                If not specified, the values for the whole tab will be returned. 
+
+        Returns:
+            Response: Response object with the sheet's data, if succeded, or error information, if failed.
+                The data is accessed by the Response.data attribute, and it's expected to be a list of lists (list of rows),
+                or a single value if only a single cell was requested.
+                If the range is not a valid xrange, it returns a Response with a 'Invalid Range' error.
+                All other errors are repassed as is via the Response.error object.
+
+        Notes:
+            If only a single cell is specified, the Response.data is a singular value.
+            All other times, it contains a list of lists or None.
+
+        Example:
+            ```python
+            # Requesting a range
+            response = tab.get_values('A2:C3') # Response.data = [[1,2,3],[4,5,6]]
+
+            # Requesting a row range using subscript:
+            response = tab['2:10'] # Response.data = [row2, row3, row4 ... ]
+
+            # Requesting a singular cell:
+            response = tab['C2'] # Response.data = 3
+
+            # Handling errors:
+            response = tab.get_values('A33sd:221AB2') # Invalid range
+            if response.error:
+                print(response.error.message) # 'Invalid x range: A33sd:221AB2'
+            ```
+        """
         
         details = self._get_dets(locals())
         function_name = 'Sheet.get_values'
@@ -448,13 +536,17 @@ class Sheet:
             details['range'] = request_range
             if response.data:
                 response.data = response.data.get('values')
+                if is_cell(rng) and isinstance(response.data, list) and len(response.data[0]) == 1:
+                    response.data = response.data[0][0]
+
             response.details = details
-            return response
+
         else:
             if response.error:
                 response.error.details = details
                 response.error.function_name = function_name
-            return response
+ 
+        return response
 
     def append_values(self, values: list, 
                       rng:str = '',
