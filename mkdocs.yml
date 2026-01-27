@@ -1,0 +1,40 @@
+site_name: Google Sheets Handler Docs
+site_url: https://exemplo.com/
+site_author: Tales Silva
+
+# Configuração do Tema
+theme:
+  name: material
+  features:
+    - navigation.tabs # Abas no topo
+    - navigation.sections # Seções no menu lateral
+    - content.code.copy # Botão de copiar código
+
+# Plugins Necessários
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]  # <--- IMPORTANTE: Aponte para onde está a pasta do seu código
+          options:
+            docstring_style: google
+            show_source: true     # Mostra o botão para ver o código fonte
+            show_root_heading: true # Mostra o título da classe (ex: Class Spreadsheet)
+
+# Extensões de Markdown (para deixar a doc bonita)
+markdown_extensions:
+  - admonition        # Permite caixas de alerta (Note, Warning)
+  - pymdownx.details  # Permite collapsible blocks
+  - pymdownx.superfences # Permite abas dentro do código
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+# Menu de Navegação
+nav:
+  - Home: index.md
+  - API Reference:
+      - Spreadsheet: spreadsheet.md
+      - Responses & Errors: responses.md

@@ -44,8 +44,8 @@ class Spreadsheet:
     
     Args:
         spreadsheet_id (str): The ID found in the Google Sheets URL.
-        token_fp (str, optional): File path to the auth token. Defaults to TOKEN_PATH.
-        cred_fp (str, optional): File path to the credentials JSON. Defaults to CRED_PATH.
+        token_fp (str, optional): File path to the auth token. Defaults to auth/token.json.
+        cred_fp (str, optional): File path to the credentials JSON. Defaults to auth/cred.json.
         scopes (list[str], optional): List of API scopes required. Defaults to SCOPES.
 
     Notes:
@@ -241,7 +241,7 @@ class Spreadsheet:
         This method supports the subscript syntax (e.g., `spreadsheet[id]`).
 
         Args:
-            sheet_id (int): The tab's id. This is an internal id that has to be accessed
+            id (int): The tab's id. This is an internal id that has to be accessed
                 by the Spreadsheet's metadata.
 
         Returns:
