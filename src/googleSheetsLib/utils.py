@@ -20,7 +20,6 @@ def number_to_column(column_int:int) -> str:
 def xrange_to_grid_range(xrange:str) -> dict:
   "Função que transforma um range do tipo A1:B2 em um dicionário grid_range com índice base 0 exclusivo"
   if not validate_xrange(xrange):
-    print("Erro ao converter xrange. Xrange inválido.")
     return dict()
   columns = re.findall(r'[A-Z]+', xrange) + ['A','A']      # Colocando valores extras para não dar xabu
   lines = re.findall(r'[0-9]+', xrange) + ['0','0']        # Colocando valores extras para não dar xabu
@@ -53,7 +52,7 @@ def validate_xrange(xrange_str: str):
     xrange_str = xrange_str.upper().strip()
     
     if '!' in xrange_str:
-        xrange_str = xrange_str.split('!')[-1]
+      xrange_str = xrange_str.split('!')[-1]
 
     patterns = {
         "full": r"^(?P<col1>[A-Z]+)(?P<row1>[1-9][0-9]*):(?P<col2>[A-Z]+)(?P<row2>[1-9][0-9]*)$",

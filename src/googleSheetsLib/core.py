@@ -2,12 +2,70 @@ from .client import *
 from .models import Response, InputOption, InsertDataOption, MajorDimension
 from googleapiclient.discovery import Resource
 from .utils import *
-from typing import Literal, get_args
+from typing import Literal, get_args, TYPE_CHECKING
+import datetime as dt
 import pandas as pd
+import logging
+if TYPE_CHECKING:
+    from googleapiclient._apis.sheets.v4 import SheetsResource # type: ignore
+    from googleapiclient._apis.sheets.v4.schemas import ValueRange, AutoFillRequest, BatchUpdateSpreadsheetRequest, Request  # type: ignore
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 TEST_SHEET_ID = '1WUBUMIw0fk_dnFO_jnMUTCMS_t_esnYKPYndZIFXhIs'
 
 class Spreadsheet:
+    """
+    Interface to handle Google Spreadsheets operations via API.
+
+    This class serves as a wrapper to interface with Google Sheets. It can handle
+    operations at the Spreadsheet level (metadata, batch updates) and acts as a 
+    factory for Sheet objects.
+
+    It handles authentication internally using the `ClientWrapper` class.
+    
+    For more information on the API, visit:
+    https://developers.google.com/workspace/sheets/api/quickstart/python
+
+
+    Attributes:
+        spreadsheet_id (str): The unique ID of the Spreadsheet (found in the URL).
+        name (str): The Spreadsheet's title.
+        locale (str): The locale of the spreadsheet (e.g., 'en_US', 'pt_BR').
+        timezone (str): The timezone of the spreadsheet.
+        client (ClientWrapper): Handler for API requests, authentication, and retry logic.
+        service (SpreadsheetResource): The authenticated Google Sheets API resource.
+        batch_requests (list[dict]): Pending requests for the `batchUpdate` endpoint.
+        batch_value_requests (list[dict]): Pending requests for the `values.batchUpdate` endpoint.
+        last_refreshed (dt.datetime): Timestamp of the last metadata update.
+        metadata (dict): Raw dictionary containing the full Spreadsheet metadata.
+        sheets_info (dict): Metadata for individual tabs (id, name, grid size), indexed by tab name.
+    
+    Args:
+        spreadsheet_id (str): The ID found in the Google Sheets URL.
+        token_fp (str, optional): File path to the auth token. Defaults to TOKEN_PATH.
+        cred_fp (str, optional): File path to the credentials JSON. Defaults to CRED_PATH.
+        scopes (list[str], optional): List of API scopes required. Defaults to SCOPES.
+
+    Notes:
+        You can setup the environment variables GOOGLE_SERVICE_CREDS and GOOGLE_SERVICE_TOKEN
+        instead of directing to the credentials path. Just insert the JSON in plain text
+        in them and the ClientWrapper will take care of the rest.
+
+    Raises:
+        ConnectionError: If the Google Client cannot be created or authenticated.
+
+    Example:
+        ```python
+        # Initialize the handler
+        ss = Spreadsheet(spreadsheet_id="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms")
+        
+        # Getting an individual tab:
+        tab = ss['Tab Name']
+        tab2 = ss.get_sheet_by_id(2084)
+        ```
+    """
     def __init__(self, 
                  spreadsheet_id:str,
                  token_fp:str = TOKEN_PATH,
@@ -18,16 +76,18 @@ class Spreadsheet:
                                     credentials_path=cred_fp,
                                     scopes=scopes)
         if not self.client.service:
-            print('Not possible to create Google Client. Returning None Object.')
-            return None
+            print('Not possible to create Google Client.')
+            raise ConnectionError('Service not found. Check the credentials or the configs.')
         self.spreadsheet_id = spreadsheet_id
-        self.service:Resource = self.client.service.spreadsheets() # type: ignore
+        self.service:SheetsResource.SpreadsheetsResource = self.client.service.spreadsheets() 
 
         self.name = ''
         self.locale = ''
         self.timezone = ''
         self.sheets_info = dict()
-        self.requests = []
+        self.batch_requests = []
+        self.batch_value_requests = []
+        self.last_refreshed = dt.datetime(1999,1,1,0,0,0)
 
         # Construindo metadata:
 
@@ -38,11 +98,33 @@ class Spreadsheet:
             print('Not possible to build metadata. Error in the response.')
 
     def _get_metadata(self) -> Response:
-        request = self.service.get(spreadsheetId = self.spreadsheet_id) # type: ignore
+        """
+        Internal method to help update metadata. It only makes the get request to the API
+        and returns an Response object containing the metadata for future parsing.
+
+        Returns:
+            Response: Response object containing either the metadata in the .data field,
+                or error information if the request failed.
+        """
+        request = self.service.get(spreadsheetId = self.spreadsheet_id) 
         response = self.client.execute(request)
         return response
     
     def build_metadata(self, metadata) -> bool:
+        """
+        Method to parse metadata dict and update the object's metadata attributes.
+
+        It builds both the Spreadsheet's and the individual Tab's metadata.
+
+        Args:
+            metadata (dict): Dictionary containing the Spreadsheet's metadata, as structured
+                by the .get() request on the Spreadsheet resource.
+
+        Returns:
+            bool: If the build succeded or failed. False if the metadata is empty or
+                it generated a KeyError, True otherwise.
+
+        """
         if not metadata:
             return False
         try:
@@ -53,8 +135,8 @@ class Spreadsheet:
             self.name = spreadsheet_metadata['title']
             self.locale = spreadsheet_metadata['locale']
             self.timezone = spreadsheet_metadata['timeZone']
+            self.last_refreshed = dt.datetime.now()
 
-            
             # Construindo metadados das abas:
             self.sheets_info.clear()
 
@@ -79,6 +161,14 @@ class Spreadsheet:
             return False
 
     def refresh_metadata(self) -> bool:
+        """
+        Method to refresh metadata. It only requests the metadata to the API and 
+        sends it to the build_metadata method.
+
+        Returns:
+            bool: if the refresh failed or succeded.
+        """
+        logger.info('Refreshing metadata')
         metadata = self._get_metadata()
         if metadata.data:
             return self.build_metadata(metadata.data)
@@ -86,6 +176,38 @@ class Spreadsheet:
             return False
         
     def get_sheet(self, sheet_name:str) -> Sheet | None:
+        """
+        Retrieves a `Sheet` object by its name using cached metadata.
+
+        This method acts as a factory, returning a `Sheet` object initialized 
+        with the data currently stored in `self.sheets_info`.
+        
+        If the sheet exists in the Google Spreadsheet but not in the local metadata 
+        (e.g., created recently), you must call `refresh_metadata()` first.
+
+        This method supports the subscript syntax (e.g., `spreadsheet['Tab Name']`).
+
+        Args:
+            sheet_name (str): The exact name of the tab as it appears in Google Sheets.
+
+        Returns:
+            Sheet: A Sheet object initialized with the tab's ID and dimensions.
+            None: If the sheet name is not found in the local metadata.
+
+        Example:
+            ```python
+            # Direct method call
+            inventory = ss.get_sheet('Inventory')
+
+            # Using subscript syntax (sugar)
+            sales = ss['Sales']
+
+            # Handling non-existent sheets
+            if not ss.get_sheet('Ghost Tab'):
+                print("Tab not found or metadata outdated.")
+            ```
+        """
+        logger.info(f'Building Sheet object. Searching for sheet {sheet_name} in local metadata...')
         if sheet_name in self.sheets_info:
             sheet_info = self.sheets_info[sheet_name]
             return Sheet(
@@ -98,10 +220,52 @@ class Spreadsheet:
                 parent_spreadsheet = self
             )
         else:
-            print(f'Sheet {sheet_name} not found. Try refreshing the metadata or check your spelling.')
+            logger.warning(f'Sheet {sheet_name} not found. Try refreshing the metadata or check your spelling.')
             return None
         
     def get_sheet_by_id(self, id:int) -> Sheet | None:
+        """
+        Retrieves a `Sheet` object by its id using cached metadata.
+
+        It's useful if you rename a tab, but maintain the id in a varibable.
+
+        To access a tab's id, get the Sheet's metadata in self.sheets_info and
+        check the sheet_id value.
+
+        This method acts as a factory, returning a `Sheet` object initialized 
+        with the data currently stored in `self.sheets_info`.
+        
+        If the sheet exists in the Google Spreadsheet but not in the local metadata 
+        (e.g., created recently), you must call `refresh_metadata()` first.
+
+        This method supports the subscript syntax (e.g., `spreadsheet[id]`).
+
+        Args:
+            sheet_id (int): The tab's id. This is an internal id that has to be accessed
+                by the Spreadsheet's metadata.
+
+        Returns:
+            Sheet: A Sheet object initialized with the tab's ID and dimensions.
+            None: If the sheet name is not found in the local metadata.
+
+        Example:
+            ```python
+            # Direct method call
+            inventory = ss.get_sheet_by_id(49203)
+
+            # Using subscript syntax (sugar)
+            sales = ss[2384]
+
+            # Using the sheets_info metadata:
+            sheet_metadata = ss.sheets_info['Sales']
+            sheet_id = sheet_metadata['sheet_id']
+            sales = ss.get_sheet_by_id(sheet_id)
+
+            # Handling non-existent sheets
+            if not ss.get_sheet_by_id(3232):
+                print("Tab not found or metadata outdated.")
+            ```
+        """
         name = ''
         for sheet_info in self.sheets_info.values():
             if sheet_info['sheet_id'] == id:
@@ -110,16 +274,125 @@ class Spreadsheet:
         if name:
             return self.get_sheet(name)
         else:
-            print(f'Sheet ID {id} not found.')
+            logger.warning(f'Sheet ID {id} not found.')
             return None
+        
+    def execute_batch(self) -> Response:
+        """
+        Executes all pending requests in the batch queue via the `batchUpdate` endpoint.
+
+        This method compiles all operations stored in `self.batch_requests`, wraps them 
+        into a single API call, and passes it to the client handler.
+
+        If the execution is successful, the method should ideally clear the pending 
+        requests queue.
+
+        Returns:
+            Response: A custom response object. 
+                - If successful (`response.ok` is True), contains the API reply.
+                - If failed, contains error details and the function name context.
+
+        Example:
+            ```python
+            # Add some operations (e.g., delete rows, format cells)
+            ss.batch_requests.append(delete_rows_request)
+            ss.batch_requests.append(format_header_request)
+
+            # Send everything in one go
+            resp = ss.execute_batch()
+
+            if resp.ok:
+                print("Batch update successful!")
+            else:
+                print(f"Error: {resp.error}")
+            ```
+        """
+        requests = self.batch_requests
+        details = self._get_dets(locals())
+        function_name = 'Spreadsheet.execute_batch'
+        if not requests:
+            return Response.fail('No request to execute.', function_name=function_name, details = details)
+        try:
+            body: BatchUpdateSpreadsheetRequest = {'requests' : requests} # type: ignore
+            request = self.service.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body = body
+            )
+        except Exception as e:
+            return Response.fail(f'Error while building request: {e}', function_name=function_name, details=details)
+        
+        response = self.client.execute(request)
+        
+        if response.ok:
+            response.details = details
+            self.batch_requests = []
+
+        elif response.error:
+            response.error.details = details
+            response.error.function_name = function_name
+
+        return response
+
+    
+    def get_info(self) -> dict:
+        """
+        Returns a simple dictionary containing the Spreadsheet's info. 
+        
+        Useful for serialization.
+
+        Returns:
+            dict: Dictionary with spreadsheet_id, name, last refreshed and tabs info.
+        """
+        return {
+            'spreadsheet_id' : self.spreadsheet_id,
+            'name' : self.name,
+            'timezone' : self.timezone,
+            'locale' : self.locale,
+            'last_refreshed' : str(self.last_refreshed),
+            'sheets' : self.sheets_info
+        }
+        
+    def _get_dets(self, locals:dict):
+        """
+        Internal method to create details about a method execution, mostly
+        to attach to Response type objects.
+
+        Receives a dictionary of parameters, generally representing the local namespace,
+        and returns an enriched and cleaned dictionary with the Spreadsheet's info.
+
+        Args:
+            locals (dict): dict with runtime parameters used to build the details dictionary.
+        
+        Returns:
+            deets (dict): data received enriched with aditional Spreadsheet information. 
+        """
+        deets = locals.copy()
+        if 'self' in deets:
+            del deets['self']
+        deets['spreadsheet_info'] = self.get_info()
+        return deets
 
     def __getitem__(self, sheet: int | str):
+        """
+        Dunder method to implement subscript syntax for both get_sheet and get_sheet_by_id.
+        
+        If it receives a string, calls get_sheet.
+        If it receives an integer, calls get_sheet_by_id.
+
+        Args:
+            sheet (str | int): The sheet's name or id to be created.
+        Returns:
+            Sheet: Sheet type object if the Sheet object creation was succesfull.
+            None: If it couldn't find the id or name in the metadata.
+        Raises:
+            ValueError: if the received parameter is neither str or int.
+        """
         if isinstance(sheet, int):
             return self.get_sheet_by_id(sheet)
         elif isinstance(sheet, str):
             return self.get_sheet(sheet)
         else:
-            raise ValueError
+            raise ValueError(f'Unexpected parameter type: {type(sheet)}.')
 
 class Sheet:
     def __init__(self,
@@ -127,7 +400,7 @@ class Sheet:
                  id:int,
                  parent_spreadsheet: Spreadsheet,
                  client:ClientWrapper,
-                 service:Resource,
+                 service:SheetsResource.SpreadsheetsResource,
                  row_count:int = 0,
                  column_count:int = 0):
         
@@ -160,7 +433,7 @@ class Sheet:
 
         # Criando requisição
         try:
-            request = self.service.values().get( # type: ignore
+            request = self.service.values().get( 
                 spreadsheetId = self.spreadsheet_id,
                 range = request_range
             )
@@ -220,10 +493,10 @@ class Sheet:
             return Response.fail(error_msg, function_name=function_name, details=details)
        
         # Preparando requisição
-        body = {'values':values}
+        body:ValueRange = {'values':values}
         
         try:
-            request = self.service.values().append( # type: ignore
+            request = self.service.values().append( 
                 spreadsheetId = self.spreadsheet_id,
                 range = request_range,
                 valueInputOption = input_option,
@@ -268,7 +541,7 @@ class Sheet:
 
         # Construíndo a request:
         try:
-            request = self.service.values().clear( # type: ignore
+            request = self.service.values().clear( 
                 spreadsheetId = self.spreadsheet_id,
                 range = request_range
             )
@@ -312,7 +585,7 @@ class Sheet:
                 rng = get_values_delta(rng, values)
             request_range = f'{self.name}!{rng}'
         else:
-            Response.fail(f'No range specified.', function_name=function_name, details = details)
+            return Response.fail(f'No range specified.', function_name=function_name, details = details)
 
         # Validando parâmetros adicionais:
         if major_dimension not in get_args(MajorDimension):
@@ -322,16 +595,16 @@ class Sheet:
             error_msg = f'Args Error: Invalid input option {value_input_option}'
             return Response.fail(error_msg, function_name = function_name, details = details)
         
-        body = {
+        body: ValueRange = {
             'values' : values,
             'majorDimension' : major_dimension
         }
         
         try:
-            request = self.service.values().update( # type: ignore
+            request = self.service.values().update(
                 range = request_range,
                 spreadsheetId = self.spreadsheet_id,
-                body = body,
+                body = body, 
                 valueInputOption = value_input_option
             )
         except Exception as e:
@@ -373,6 +646,129 @@ class Sheet:
             response.details = details
             response.details['updated_range'] = updated_range
             response.details['cell'] = cell
+        elif response.error:
+            response.error.details = details
+            response.error.function_name = function_name
+        return response
+    
+    def autofill_drag(self, source_range:str, drag_distance:int, prepare = False, dimension:MajorDimension = 'ROWS'):
+
+        details = self._get_dets(locals())
+        function_name = 'Sheet.autofill_drag'
+
+        if drag_distance < 0:
+            return Response.fail(f'Invalid drag distance: {drag_distance}.', function_name=function_name, details = details)
+        
+        if dimension not in get_args(MajorDimension):
+            return Response.fail(f'Invalid dimension: {dimension}.', function_name=function_name, details = details)
+
+        if source_range:
+            if '!' in source_range:
+                source_range = source_range.split('!')[-1]
+            grid_range = xrange_to_grid_range(source_range)
+            if not grid_range:
+                return Response.fail(f'Invalid range.', function_name=function_name, details = details)
+        else:
+            return Response.fail(f'No range specified.', function_name=function_name, details = details)
+
+
+        grid_range['sheetId'] = self.id
+
+        autofill_request = {
+            'autoFill':{
+                'sourceAndDestination': {
+                    'source' : grid_range,
+                    'dimension' : dimension,
+                    'fillLength' : drag_distance
+                }
+            }
+        }
+        
+        details['autofill_request'] = autofill_request
+
+        if prepare:
+            details['prepared'] = True
+            self.parent_spreadsheet.batch_requests.append(autofill_request)
+            return Response.success(details = details)
+        
+        try:
+            body: BatchUpdateSpreadsheetRequest = {'requests' : [autofill_request]} # type: ignore
+            request = self.service.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body = body
+            )
+        except Exception as e:
+            return Response.fail(f'Error while building request: {e}', function_name=function_name, details=details)
+        
+        response = self.client.execute(request)
+
+        if response.ok:
+            response.details = details
+            response.data = None
+            return response
+        elif response.error:
+            response.error.details = details
+            response.error.function_name = function_name
+        return response
+        
+    def delete_rows(self, rng:str = '', start_row:int =-1, end_row:int=-1, prepare = False):
+        "Função que deleta linhas da planilha. Pode receber tanto range, quanto pode receber start_row e end_row (base 1 inclusivo)"
+        
+        details = self._get_dets(locals())
+        function_name = 'Sheet.delete_rows'
+
+        if rng:
+            if '!' in rng:
+                rng = rng.split('!')[-1]
+            grid_range = xrange_to_grid_range(rng)
+            if not grid_range:
+                return Response.fail(f'Invalid range: {rng}', function_name=function_name, details=details)
+            elif grid_range['startRowIndex'] < 0 or grid_range['endRowIndex'] < 1:
+                return Response.fail(f'Invalid range: {rng}', function_name=function_name, details=details)
+            else:
+                start_index = grid_range['startRowIndex']
+                end_index = grid_range['endRowIndex']
+        if not rng:
+            if end_row == -1 and start_row == -1:
+                return Response.fail(f'Missing arguments: range or start_row and end_row', function_name=function_name, details=details)
+            if (end_row < 1 or start_row < 1) or end_row < start_row:
+                return Response.fail(f'Invalid row ranges: {(start_row, end_row)}', function_name=function_name, details=details)
+            start_index = start_row - 1 # Offset de passar de base 1 pra base 0
+            end_index = end_row         # Mantém, porque o índice é exclusivo
+
+        delete_request = {
+            'deleteDimension' : {
+                'range': {
+                    'sheetId' : self.id,
+                    'dimension' : 'ROWS',
+                    'startIndex' : start_index,
+                    'endIndex' : end_index
+                }
+            }
+        }
+
+        details['delete_request'] = delete_request # Telemetria
+
+        if prepare:
+            details['prepared'] = True
+            self.parent_spreadsheet.batch_requests.append(delete_request)
+            return Response.success(details = details)    
+
+
+        try:
+            body: BatchUpdateSpreadsheetRequest = {'requests' : [delete_request]} # type: ignore
+            request = self.service.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body = body
+            )
+        except Exception as e:
+            return Response.fail(f'Error while building request: {e}', function_name=function_name, details=details)
+
+        response = self.client.execute(request)
+
+        if response.ok:
+            response.details = details
+            response.data = None
         elif response.error:
             response.error.details = details
             response.error.function_name = function_name

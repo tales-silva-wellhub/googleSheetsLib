@@ -6,10 +6,13 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
 from .models import Response
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from .config import TOKEN_PATH, CRED_PATH, SCOPES
 from dotenv import load_dotenv
 import json
+
+if TYPE_CHECKING:
+    from googleapiclient._apis.sheets.v4 import SheetsResource # type: ignore
 
 load_dotenv()
 
@@ -50,7 +53,7 @@ class ClientWrapper:
 
         self.service = self._authenticate()
         
-    def _authenticate(self) -> Resource:
+    def _authenticate(self) -> SheetsResource:
         if self.token_dict:
             self.creds = Credentials.from_authorized_user_info(self.token_dict, self.scopes)
         elif os.path.exists(self.token_path):
