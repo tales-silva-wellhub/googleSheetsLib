@@ -548,11 +548,55 @@ class Sheet:
  
         return response
 
-    def append_values(self, values: list, 
+    def append_values(self, values: list[list], 
                       rng:str = '',
                       input_option: InputOption = 'USER_ENTERED',
                       insert_data_option: InsertDataOption = 'INSERT_ROWS') -> Response:
-        "Função que pega uma lista de valores e faz um append na aba da spreadsheet."
+        """
+        This method inserts new data into the Spreadsheet's tab, starting at the specified range.
+
+        The values to be inserted can be larger than the specified range; the range just delimits
+        where the append starts.
+
+        Values also need to be formated as a list of lists, a 2D matrix where each value is stored
+        in an indexed `values[i][j]`.
+
+        Args:
+            values (list[list]): Values to be appended. Needed to be formated as a list of rows,
+                i.e. a 2D matrix. Try to keep the values to str and int types, as other object types tend
+                to trigger a bad request error.
+            rng (str): Range to start the append. Formated in Excel range (e.g. 'A1:B2'), can be a single cell
+                in which the API will append the whole set of values.
+            input_option (InputOption, optional): Input mode, defaulted to USER_ENTERED.
+            insert_data_option (InsertDataOption, optional): How to append, either by inserting new rows, or
+                by overwritting blank cells.
+
+        Returns:
+            Response: response object with the status of the request. Response.data defaults to None.
+                Returns a failed response if: the value list is empty; the range is invalid; selected
+                an invalid input or insert option; failed to build request; or request sent an error
+                response.
+
+        Notes:
+            The most common type of error here is badly formated value list. This means inputing something that is not
+            a list of lists, or inserting object types that are not supported. 
+            
+            A quick way to fix types is valling `values = [[str(val) for val in row] for row in values]`, 
+            which converts every value to str.
+
+        Examples:
+            ```python
+            # appending values to a tab
+            values = [[1,2,3],
+                      [4,5,6]]
+            tab.append_values(rng = 'A1', values = values) # Will try to append the values to the first cell
+
+            # handling errors
+            invalid_values = []
+            response = tab.append_values(rng = 'C2:D4', values = invalid_values)
+            print(response.error) # No values to insert.
+            ```
+        """
         
         # Registrando dados para validação depois.
         details = self._get_dets(locals())
@@ -616,7 +660,29 @@ class Sheet:
                 response.error.function_name = function_name
             return response
 
-    def clear_cells(self, rng:str):
+    def clear_cells(self, rng:str = '') -> Response:
+        """
+        Method to clear cells in a tab of the Spreadsheet. Will only empty the value of the cell,
+        otherwise keeping the format and other properties.
+
+        Args:
+            rng (str): range to clear, in Excel format (e.g. 'A1:G3', '1:12'). If left empty,
+                whole tab will be cleared, so be careful.
+
+        Returns:
+            Response: Response object with the status of the request. Returns an failed response if the
+                rng is invalid, if it failed to build the request, or if the API call returned
+                an error.
+
+        Example:
+            ```python
+            # clearing a few cells:
+            tab.clear_cells('A1:D9')
+
+            # clearing the whole tab
+            tab.clear_cells()
+            ```
+        """
         details = self._get_dets(locals())
         function_name = 'Sheet.append_values'
 
@@ -893,17 +959,17 @@ class Sheet:
             'parent_spreadsheet': self.parent_spreadsheet.name
         }
 
-    def _get_dets(self, locals:dict):
+    def _get_dets(self, locals:dict) -> dict:
         deets = locals.copy()
         if 'self' in deets:
             del deets['self']
         deets['sheet_info'] = self.get_info()
         return deets
     
-    def __getitem__(self, rng):
+    def __getitem__(self, rng) -> Response:
         return self.get_values(rng)
     
-    def __setitem__(self, rng, new_value):
+    def __setitem__(self, rng, new_value) -> Response:
         if is_cell(rng) and not isinstance(new_value, list):
             return self.update_cell(cell = rng, value = new_value)
         else:
