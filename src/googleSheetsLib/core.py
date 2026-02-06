@@ -6,9 +6,7 @@ from typing import Literal, get_args, TYPE_CHECKING
 import datetime as dt
 import pandas as pd
 import logging
-if TYPE_CHECKING:
-    from googleapiclient._apis.sheets.v4 import SheetsResource # type: ignore
-    from googleapiclient._apis.sheets.v4.schemas import ValueRange, AutoFillRequest, BatchUpdateSpreadsheetRequest, Request  # type: ignore
+
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -79,7 +77,7 @@ class Spreadsheet:
             print('Not possible to create Google Client.')
             raise ConnectionError('Service not found. Check the credentials or the configs.')
         self.spreadsheet_id = spreadsheet_id
-        self.service:SheetsResource.SpreadsheetsResource = self.client.service.spreadsheets() 
+        self.service = self.client.service.spreadsheets() # type: ignore
 
         self.name = ''
         self.locale = ''
@@ -452,7 +450,7 @@ class Sheet:
                  id:int,
                  parent_spreadsheet: Spreadsheet,
                  client:ClientWrapper,
-                 service:SheetsResource.SpreadsheetsResource,
+                 service,
                  row_count:int = 0,
                  column_count:int = 0):
         
@@ -629,7 +627,7 @@ class Sheet:
             return Response.fail(error_msg, function_name=function_name, details=details)
        
         # Preparando requisição
-        body:ValueRange = {'values':values}
+        body = {'values':values}
         
         try:
             request = self.service.values().append( 
@@ -723,8 +721,8 @@ class Sheet:
             return response
 
     def update(self,
+               values:list[list],
                rng:str = 'A1', 
-               values:list[list] = [[]],
                value_input_option:InputOption = 'USER_ENTERED',
                major_dimension:MajorDimension = 'ROWS'):
         "Função que atualiza células da planilha."
@@ -753,7 +751,7 @@ class Sheet:
             error_msg = f'Args Error: Invalid input option {value_input_option}'
             return Response.fail(error_msg, function_name = function_name, details = details)
         
-        body: ValueRange = {
+        body = {
             'values' : values,
             'majorDimension' : major_dimension
         }
@@ -967,7 +965,11 @@ class Sheet:
         return deets
     
     def __getitem__(self, rng) -> Response:
-        return self.get_values(rng)
+        result = self.get_values(rng)
+        if result.data:
+            return result.data
+        else:
+            return result
     
     def __setitem__(self, rng, new_value) -> Response:
         if is_cell(rng) and not isinstance(new_value, list):

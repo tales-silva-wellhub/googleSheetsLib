@@ -11,9 +11,6 @@ from .config import TOKEN_PATH, CRED_PATH, SCOPES
 from dotenv import load_dotenv
 import json
 
-if TYPE_CHECKING:
-    from googleapiclient._apis.sheets.v4 import SheetsResource # type: ignore
-
 load_dotenv()
 
 class ClientWrapper:
@@ -53,7 +50,7 @@ class ClientWrapper:
 
         self.service = self._authenticate()
         
-    def _authenticate(self) -> SheetsResource:
+    def _authenticate(self) -> Resource:
         if self.token_dict:
             self.creds = Credentials.from_authorized_user_info(self.token_dict, self.scopes)
         elif os.path.exists(self.token_path):
